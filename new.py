@@ -1,8 +1,7 @@
 from PyPDF2 import PdfReader
-import pdfplumber
+import re
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import re
 
 # Initialize ML model
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -14,7 +13,6 @@ keyword_embeddings = model.encode(keywords)
 
 
 def extract_text_with_metadata(pdf_path):
-    print("text with metadata")
     """
     Extract text, page numbers, and line metadata from a PDF.
     """
@@ -33,8 +31,8 @@ def extract_text_with_metadata(pdf_path):
                 })
     return content_metadata
 
+
 def extract_coverage_lines(pdf_content):
-    print("coverage lines")
     """
     Extract lines with coverage-related terms or numbers.
     Returns a dictionary with metadata (e.g., page, line) and text.
@@ -53,10 +51,20 @@ def extract_coverage_lines(pdf_content):
             }
     return coverage_lines
 
+
+def extract_values(text):
+    """
+    Extract numerical values and their associated currencies from a text line.
+    """
+    value_pattern = re.compile(r"(\b(?:CAD|USD)?\s*\$?\d+(?:,\d{3})*(?:\.\d+)?\b)")
+    matches = value_pattern.findall(text)
+    return [match.replace(",", "") for match in matches]
+
+
 def compare_coverage_lines(pdf1_lines, pdf2_lines):
-    print("compare coverage lines")
     """
     Compare extracted coverage lines between two PDFs using embeddings.
+    Also checks for value differences.
     Returns a list of differences with metadata.
     """
     differences = []
@@ -74,18 +82,34 @@ def compare_coverage_lines(pdf1_lines, pdf2_lines):
                 best_match = line2
                 best_similarity = similarity
 
-        # If best match is below a threshold, consider it a difference
-        if best_similarity < 0.8:
+        # Check if values differ for similar lines
+        if best_similarity >= 0.8:
+            values1 = extract_values(line1['text'])
+            values2 = extract_values(best_match['text']) if best_match else []
+
+            if values1 != values2:
+                differences.append({
+                    "pdf1": line1,
+                    "pdf2": best_match,
+                    "similarity": best_similarity,
+                    "value_difference": {
+                        "pdf1_values": values1,
+                        "pdf2_values": values2
+                    }
+                })
+        else:
             differences.append({
                 "pdf1": line1,
                 "pdf2": best_match or {"page": None, "line": None, "text": "Not Found"},
                 "similarity": best_similarity
             })
+
     return differences
+
 
 def process_and_compare_pdfs(pdf1_path, pdf2_path):
     """
-    Process two PDFs and compare coverage data.
+    Process two PDFs and compare coverage data, including value mismatches.
     """
     # Extract content with metadata
     pdf1_content = extract_text_with_metadata(pdf1_path)
